@@ -66,3 +66,36 @@ varies more subtly (like based on RNA vs protein) we might have to change some o
 that simple it should be a plug and play.
 
 
+
+**p_ij decision (interim):** `pij_method="matrix"` (`scoring.matrix_edge_probability`) uses `NEW_log_uniform_relative_scores.csv` as p_ij; for the 32 proteins in the co-phase-separation graph with no annotated IDR we fill p_ij in log space with the scored partner protein's geometric row median, or the global geometric median (~0.10) if neither protein is scored, rather than dropping them (48/91 co-phase-separation pairs, incl. tau, MED1, CAPRIN1) or using 0/1 (L1 = log(β/p) → +∞ or ≤ 0, which would force or forbid them in a candidate condensate by annotation artifact alone).
+**Why per-protein:** ~84% of the variance in log p_ij is explained by per-protein "stickiness" effects, so the partner protein's row carries most of the signal, and a median fill gives L1 ≈ +2.2 ≈ −γ, keeping imputed pairs near break-even; this is temporary until IDR features are computed for the missing proteins (see `imputed` column in the output).
+
+## Choosing alpha and normalization (co-phase-separation graph)
+
+- **No normalization (`--no-normalize`).** The paper's D^-1/2 W D^-1/2 discounts pairs involving highly connected proteins, but our seed proteins (FUS, G3BP1) *are* the most connected proteins, so it weakens the seed signal: only proteins with a single co-phase-separation partner enter the seed-relevant subgraph, and those can never satisfy the ILP's connectivity constraint (0 candidate condensates). The empirical P-value against random seed-protein sets already corrects for connectivity, so we keep only that correction.
+- **alpha = 0.5 / rho(W) ≈ 0.093** (rho = largest eigenvalue of the raw co-phase-separation adjacency = 5.36). The quantity that matters is alpha·rho (per-hop decay); normalized W has rho = 1, so this matches the paper's alpha = 0.5. Near 1 the scores lose seed-protein specificity and raw propagation diverges at alpha·rho ≥ 1. Recompute rho whenever the graph changes.
+
+## Condensate runs (from Paper_ILP/)
+
+One independent run per condensate, as the paper runs once per disease. Each prior is a single seed protein, so we use `--pvalue 0.05`: with one seed, a protein's empirical P-value can't go below ~1/(n−1) ≈ 0.012, so p < 0.01 would keep only the seed protein.
+
+```
+$ python run_condensate.py --no-normalize --alpha 0.093 --pvalue 0.05 --priors ../data/priors/G3BP1.txt
+co-phase-separation graph: 88 proteins, 91 co-phase-separation pairs; seed proteins in graph: 1 / 1
+[stage 1] 37 proteins with p < 0.05
+[stage 2] p_ij from score matrix: 24 scored, 18 row-median fill, 3 global fill
+[stage 2] seed-relevant subgraph H: 37 proteins, 45 pairs, gamma = -2.303
+[stage 3] 1 candidate condensates
+rank  size  edges  imputed  density  ilp_objective  L(C)  proteins
+1     4     5      3        0.83     6.61           7.76  P09651(hnRNPA1),P10636(tau),P31483(TIA1),Q13283(G3BP1)*
+
+$ python run_condensate.py --no-normalize --alpha 0.093 --pvalue 0.05 --priors ../data/priors/FUS.txt
+co-phase-separation graph: 88 proteins, 91 co-phase-separation pairs; seed proteins in graph: 1 / 1
+[stage 1] 30 proteins with p < 0.05
+[stage 2] p_ij from score matrix: 22 scored, 15 row-median fill, 0 global fill
+[stage 2] seed-relevant subgraph H: 30 proteins, 37 pairs, gamma = -2.303
+[stage 3] 1 candidate condensates
+rank  size  edges  imputed  density  ilp_objective  L(C)  proteins
+1     4     6      3        1.00     7.33           7.33  P22626(hnRNPA2),P35637(FUS)*,P52597(hnRNPF),Q14008(chTOG)
+```
+Timings are omitted; protein names are added here for UniProt IDs missing from `annotated_idr_features.csv`. `--terminology paper` prints the original gene/network wording. Half of each candidate condensate's co-phase-separation pairs use imputed p_ij.
